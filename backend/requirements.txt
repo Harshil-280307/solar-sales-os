@@ -1,1 +1,6 @@
-k
+fastapi
+pydantic
+sqlalchemy
+reportlab
+uvicorn[standard]
+python-multipart
