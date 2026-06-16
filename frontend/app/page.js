@@ -25,7 +25,7 @@ export default function Home() {
 
   const calculate = async () => {
     const res = await fetch(
-      "https://solar-sales-os.onrender.com/calculate",
+      `${process.env.NEXT_PUBLIC_API_URL}/calculate`,
       {
         method: "POST",
         headers: {
@@ -41,7 +41,7 @@ export default function Home() {
     setResult(data);
 
     await fetch(
-      "https://solar-sales-os.onrender.com/save-lead",
+      `${process.env.NEXT_PUBLIC_API_URL}/save-lead`,
       {
         method: "POST",
         headers: {

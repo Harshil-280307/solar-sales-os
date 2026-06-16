@@ -16,7 +16,7 @@ bill: "",
 });
 
 const fetchLeads = () => {
-fetch("${process.env.NEXT_PUBLIC_API_URL}/leads")
+fetch(`${process.env.NEXT_PUBLIC_API_URL}/leads`)
 .then((res) => res.json())
 .then((data) => setLeads(data))
 .catch((err) => console.error(err));
