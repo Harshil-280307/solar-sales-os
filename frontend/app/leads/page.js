@@ -16,7 +16,7 @@ bill: "",
 });
 
 const fetchLeads = () => {
-fetch("http://127.0.0.1:8000/leads")
+fetch("${process.env.NEXT_PUBLIC_API_URL}/leads")
 .then((res) => res.json())
 .then((data) => setLeads(data))
 .catch((err) => console.error(err));
@@ -29,7 +29,7 @@ fetchLeads();
 const updateStatus = async (id, status) => {
 try {
 await fetch(
-`http://127.0.0.1:8000/update-status/${id}?status=${status}`,
+`${process.env.NEXT_PUBLIC_API_URL}/update-status/${id}?status=${status}`,
 {
 method: "PUT",
 }
@@ -58,7 +58,7 @@ if (!confirmDelete) return;
 
 try {
   await fetch(
-    `http://127.0.0.1:8000/delete-lead/${id}`,
+    `${process.env.NEXT_PUBLIC_API_URL}/delete-lead/${id}`,
     {
       method: "DELETE",
     }
@@ -90,7 +90,7 @@ setEditForm({
 const saveEdit = async () => {
 try {
 await fetch(
-`http://127.0.0.1:8000/update-lead/${editingLead.id}`,
+`${process.env.NEXT_PUBLIC_API_URL}/update-lead/${editingLead.id}`,
 {
 method: "PUT",
 headers: {
@@ -271,7 +271,7 @@ return ( <div className="max-w-7xl mx-auto text-white">
 
                   <button onClick={() =>
                       window.open(
-                        `http://127.0.0.1:8000/generate-proposal/${lead.id}`,
+                        `${process.env.NEXT_PUBLIC_API_URL}/generate-proposal/${lead.id}`,
                         "_blank"
                       )
                     }
