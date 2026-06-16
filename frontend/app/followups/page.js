@@ -6,7 +6,7 @@ export default function FollowUps() {
   const [leads, setLeads] = useState([]);
 
   const fetchLeads = () => {
-    fetch("http://127.0.0.1:8000/follow-ups")
+    fetch("https://solar-sales-os.onrender.com/follow-ups")
       .then((res) => res.json())
       .then((data) => setLeads(data))
       .catch((err) => console.error(err));
@@ -19,7 +19,7 @@ export default function FollowUps() {
   const sendFollowUp = async (id) => {
     try {
       await fetch(
-        `http://127.0.0.1:8000/send-followup/${id}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/send-followup/${id}`,
         {
           method: "POST",
         }

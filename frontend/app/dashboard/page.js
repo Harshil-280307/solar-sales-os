@@ -46,7 +46,7 @@ export default function Dashboard() {
   const [trendData, setTrendData] = useState(null);
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/leads")
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/leads`)
       .then((res) => res.json())
       .then((data) => {
         setRecentLeads(
