@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Navbar from "./Navbar";
 import Sidebar from "./Sidebar";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "https://solar-sales-os.onrender.com";
 
 export default function AppShell({ children }) {
   const router = useRouter();

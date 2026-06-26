@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { Trash2, Edit2 } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "https://solar-sales-os.onrender.com";
 
 export default function LeadsPage() {
   const searchParams = useSearchParams();
