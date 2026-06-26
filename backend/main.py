@@ -14,8 +14,9 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from fastapi.responses import FileResponse
 import random
+import re
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -28,6 +29,7 @@ from reportlab.graphics.shapes import Drawing, Rect, Circle, Line, Polygon, Stri
 from reportlab.graphics.charts.linecharts import HorizontalLineChart
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.barcode import qr
+from sqlalchemy import text, inspect
 
 # ✅ Create FastAPI app
 app = FastAPI()
@@ -43,6 +45,18 @@ app.add_middleware(
 
 # ✅ Create DB tables
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_lead_columns():
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("leads")}
+
+    with engine.begin() as connection:
+        if "next_call_date" not in columns:
+            connection.execute(text("ALTER TABLE leads ADD COLUMN next_call_date DATE"))
+
+
+ensure_lead_columns()
 
 # ============================
 # 📥 INPUT MODEL
@@ -107,7 +121,8 @@ def save_lead(data: dict):
         bill=bill,
         system_size=data.get("system_size"),
         annual_savings=data.get("annual_savings"),
-        status=status
+        status=status,
+        next_call_date=datetime.utcnow().date()
     )
 
     db.add(new_lead)
@@ -121,7 +136,7 @@ def save_lead(data: dict):
 @app.get("/leads")
 def get_leads():
     db = SessionLocal()
-    leads = db.query(Lead).all()
+    leads = db.query(Lead).order_by(Lead.created_at.desc()).all()
     db.close()
 
     result = []
@@ -131,11 +146,18 @@ def get_leads():
             "id": lead.id,
             "name": lead.name,
             "phone": lead.phone,
+            "notes": lead.notes,
             "bill": lead.bill,
             "system_size": lead.system_size,
             "annual_savings": lead.annual_savings,
+            "survey_date": lead.survey_date,
+            "survey_status": lead.survey_status,
+            "next_followup_date": lead.next_followup_date.isoformat()
+                if lead.next_followup_date
+                else None,
             "status": lead.status,
 	        "follow_up_count": lead.follow_up_count,
+            "next_call_date": lead.next_call_date.isoformat() if lead.next_call_date else None,
             "created_at": lead.created_at.isoformat()
                 if lead.created_at
                 else None
@@ -153,6 +175,8 @@ def update_status(lead_id: int, status: str):
 
     if lead:
         lead.status = status
+        if status in ("closed", "lost"):
+            lead.next_call_date = None
         db.commit()
 
     db.close()
@@ -191,25 +215,113 @@ def update_lead(lead_id: int, data: dict):
     return {"message": "Lead updated"}
 
 
+@app.put("/update-notes/{lead_id}")
+def update_notes(lead_id: int, data: dict):
+    db = SessionLocal()
+
+    lead = db.query(Lead).filter(
+        Lead.id == lead_id
+    ).first()
+
+    if not lead:
+        db.close()
+        return {"message": "Lead not found"}
+
+    lead.notes = data.get("notes", "")
+    db.commit()
+    db.close()
+
+    return {"message": "Notes updated"}
+
+
+@app.put("/schedule-survey/{lead_id}")
+def schedule_survey(lead_id: int, data: dict):
+    db = SessionLocal()
+
+    lead = db.query(Lead).filter(
+        Lead.id == lead_id
+    ).first()
+
+    if not lead:
+        db.close()
+        return {"message": "Lead not found"}
+
+    survey_date = data.get("survey_date")
+
+    try:
+        lead.survey_date = datetime.fromisoformat(survey_date).date() if survey_date else None
+    except Exception:
+        db.close()
+        return {"message": "Invalid survey date"}
+
+    lead.survey_status = "scheduled"
+    db.commit()
+    db.close()
+
+    return {"message": "Survey scheduled"}
+
+
+@app.get("/survey-reminders")
+def survey_reminders():
+    db = SessionLocal()
+    leads = db.query(Lead).all()
+    today = datetime.utcnow().date()
+
+    today_surveys = []
+    tomorrow_surveys = []
+    overdue_surveys = []
+
+    for lead in leads:
+        if not lead.survey_date:
+            continue
+
+        data = {
+            "id": lead.id,
+            "name": lead.name,
+            "phone": lead.phone,
+            "status": lead.status,
+            "survey_date": lead.survey_date.isoformat(),
+            "survey_status": lead.survey_status,
+        }
+
+        if lead.survey_date < today:
+            overdue_surveys.append(data)
+        elif lead.survey_date == today:
+            today_surveys.append(data)
+        elif lead.survey_date == (today + timedelta(days=1)):
+            tomorrow_surveys.append(data)
+
+    db.close()
+    return {
+        "today": today_surveys,
+        "tomorrow": tomorrow_surveys,
+        "overdue": overdue_surveys,
+    }
+
+
 
 
 @app.get("/follow-ups")
 def get_followups():
     db = SessionLocal()
-    leads = db.query(Lead).all()
+    leads = db.query(Lead).filter(
+        Lead.follow_up_count < 3,
+        Lead.status != "lost",
+        Lead.status != "closed"
+    ).all()
 
     result = []
 
     for lead in leads:
-        # show only leads needing follow-up
-        if lead.follow_up_count < 3:
-            result.append({
-                "id": lead.id,
-                "name": lead.name,
-                "phone": lead.phone,
-                "status": lead.status,
-                "follow_up_count": lead.follow_up_count
-            })
+        result.append({
+            "id": lead.id,
+            "name": lead.name,
+            "phone": lead.phone,
+            "status": lead.status,
+            "follow_up_count": lead.follow_up_count,
+            "last_contacted": lead.last_contacted.isoformat() if lead.last_contacted else None,
+            "next_followup_date": lead.next_followup_date.isoformat() if lead.next_followup_date else None,
+        })
 
     db.close()
     return result
@@ -253,6 +365,19 @@ def send_followup(lead_id: int):
     lead = db.query(Lead).filter(Lead.id == lead_id).first()
 
     if lead:
+        if lead.follow_up_count == 0:
+            lead.next_followup_date = datetime.utcnow() + timedelta(days=3)
+            lead.next_call_date = (datetime.utcnow() + timedelta(days=3)).date()
+        elif lead.follow_up_count == 1:
+            lead.next_followup_date = datetime.utcnow() + timedelta(days=5)
+            lead.next_call_date = (datetime.utcnow() + timedelta(days=5)).date()
+        elif lead.follow_up_count == 2:
+            lead.next_followup_date = datetime.utcnow() + timedelta(days=7)
+            lead.next_call_date = (datetime.utcnow() + timedelta(days=7)).date()
+        elif lead.follow_up_count >= 3:
+            lead.next_followup_date = None
+            lead.next_call_date = None
+
         lead.follow_up_count += 1
         lead.last_contacted = datetime.utcnow()
         db.commit()
@@ -260,6 +385,146 @@ def send_followup(lead_id: int):
     db.close()
 
     return {"message": "Follow-up sent"}
+
+
+@app.get("/dashboard-stats")
+def dashboard_stats():
+    db = SessionLocal()
+    leads = db.query(Lead).all()
+    today = datetime.utcnow().date()
+
+    def count_status(status):
+        return len([lead for lead in leads if lead.status == status])
+
+    today_calls = len([
+        lead for lead in leads
+        if lead.next_call_date == today and lead.status not in ("lost", "closed")
+    ])
+    overdue_calls = len([
+        lead for lead in leads
+        if lead.next_call_date and lead.next_call_date < today and lead.status not in ("lost", "closed")
+    ])
+    today_surveys = len([
+        lead for lead in leads
+        if lead.survey_date == today
+    ])
+
+    revenue_potential = sum(
+        (lead.system_size or 0) * 50000
+        for lead in leads
+        if lead.status not in ("closed", "lost")
+    )
+
+    db.close()
+
+    return {
+        "total_leads": len(leads),
+        "new": count_status("new"),
+        "contacted": count_status("contacted"),
+        "hot": count_status("hot"),
+        "warm": count_status("warm"),
+        "closed": count_status("closed"),
+        "lost": count_status("lost"),
+        "today_calls": today_calls,
+        "overdue_calls": overdue_calls,
+        "today_surveys": today_surveys,
+        "revenue_potential": revenue_potential,
+    }
+
+
+@app.get("/followup-message/{lead_id}")
+def followup_message(lead_id: int):
+    db = SessionLocal()
+
+    lead = db.query(Lead).filter(
+        Lead.id == lead_id
+    ).first()
+
+    if not lead:
+        db.close()
+        return {"error": "Lead not found"}
+
+    count = lead.follow_up_count
+
+    if count == 0:
+        message = f"""Hello {lead.name},
+Your solar proposal is ready.
+⚡ System Size: {lead.system_size} kW
+💰 Annual Savings: ₹{lead.annual_savings}
+
+Please review it and let us know your thoughts.
+Regards,
+Veronic Solar"""
+    elif count == 1:
+        message = f"""Hello {lead.name},
+Just following up regarding your solar proposal.
+If you have any questions about cost, subsidy, installation or savings, we would be happy to help.
+Regards,
+Veronic Solar"""
+    elif count == 2:
+        message = f"""Hello {lead.name},
+This is our final follow-up regarding your solar proposal.
+Solar savings and subsidy benefits are currently available.
+Let us know if you'd like to proceed.
+Regards,
+Veronic Solar"""
+    else:
+        message = "Completed"
+
+    phone = lead.phone
+
+    db.close()
+
+    return {
+        "phone": phone,
+        "message": message,
+        "follow_up_count": count
+    }
+
+
+@app.get("/followup-reminders")
+def followup_reminders():
+    db = SessionLocal()
+    leads = db.query(Lead).all()
+    today = datetime.utcnow().date()
+
+    today_calls = []
+    tomorrow_calls = []
+    overdue_calls = []
+    completed_calls = []
+
+    for lead in leads:
+        data = {
+            "id": lead.id,
+            "name": lead.name,
+            "phone": lead.phone,
+            "status": lead.status,
+            "follow_up_count": lead.follow_up_count,
+        }
+
+        if lead.follow_up_count >= 3 or lead.status in ("lost", "closed"):
+            completed_calls.append(data)
+            continue
+
+        if not lead.next_call_date:
+            continue
+
+        followup_date = lead.next_call_date
+
+        if followup_date < today:
+            overdue_calls.append(data)
+        elif followup_date == today:
+            today_calls.append(data)
+        elif followup_date == (today + timedelta(days=1)):
+            tomorrow_calls.append(data)
+
+    db.close()
+    return {
+        "today": today_calls,
+        "tomorrow": tomorrow_calls,
+        "overdue": overdue_calls,
+        "completed": completed_calls,
+    }
 
 @app.get("/generate-proposal/{lead_id}")
 def generate_proposal(lead_id: int):
@@ -616,6 +881,22 @@ def generate_proposal(lead_id: int):
         ["Solar Investment", money(net_investment)],
         ["Net Savings", money(savings_25_years - net_investment)],
     ]))
+    story.append(Spacer(1, 8))
+    emi_table = Table([
+        ["Plan", "Monthly EMI"],
+        ["12 Months", f"Rs. {round(project_cost / 12):,}"],
+        ["24 Months", f"Rs. {round(project_cost / 24):,}"],
+        ["36 Months", f"Rs. {round(project_cost / 36):,}"],
+        ["60 Months", f"Rs. {round(project_cost / 60):,}"],
+    ])
+    emi_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.darkblue),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(emi_table)
     story.append(PageBreak())
 
     # Page 7: 25 year projection
@@ -759,3 +1040,112 @@ def generate_proposal(lead_id: int):
         filename="Veronic_Solar_Proposal.pdf",
         media_type="application/pdf"
     )
+
+
+@app.get("/emi/{lead_id}")
+def calculate_emi(lead_id: int):
+    db = SessionLocal()
+
+    lead = db.query(Lead).filter(
+        Lead.id == lead_id
+    ).first()
+
+    db.close()
+
+    if not lead:
+        return {"message": "Lead not found"}
+
+    project_cost = (lead.system_size or 0) * 50000
+
+    return {
+        "project_cost": project_cost,
+        "12_month": round(project_cost / 12),
+        "24_month": round(project_cost / 24),
+        "36_month": round(project_cost / 36),
+        "60_month": round(project_cost / 60)
+    }
+@app.get("/lead-chart")
+def lead_chart():
+    db = SessionLocal()
+    leads = db.query(Lead).all()
+
+    months = {}
+    for lead in leads:
+        if not lead.created_at:
+            continue
+        month = lead.created_at.strftime("%b")
+        months[month] = months.get(month, 0) + 1
+
+    db.close()
+    return months
+
+
+@app.get("/revenue-chart")
+def revenue_chart():
+    db = SessionLocal()
+    leads = db.query(Lead).all()
+
+    months = {}
+    for lead in leads:
+        if not lead.created_at:
+            continue
+        month = lead.created_at.strftime("%b")
+        revenue = (lead.system_size or 0) * 50000
+        months[month] = months.get(month, 0) + revenue
+
+    db.close()
+    return months
+
+
+@app.get("/notifications")
+def notifications():
+    db = SessionLocal()
+    overdue = []
+    today = datetime.utcnow().date()
+    leads = db.query(Lead).all()
+
+    for lead in leads:
+        if (
+            lead.next_followup_date
+            and lead.next_followup_date.date() <= today
+        ):
+            overdue.append({
+                "name": lead.name
+            })
+
+    db.close()
+    return overdue
+
+
+@app.get("/whatsapp/{lead_id}")
+def whatsapp_data(lead_id: int, request: Request):
+    db = SessionLocal()
+
+    lead = db.query(Lead).filter(
+        Lead.id == lead_id
+    ).first()
+
+    db.close()
+
+    if not lead:
+        return {"error": "Lead not found"}
+
+    phone = re.sub(r"\D", "", str(lead.phone or ""))
+    system_size_text = f"{lead.system_size:g}kW" if lead.system_size is not None else "N/A"
+    annual_savings_text = f"₹{lead.annual_savings:,.0f}" if lead.annual_savings is not None else "₹0"
+    proposal_pdf_link = f"{str(request.base_url)}generate-proposal/{lead_id}"
+
+    message = f"""Hello {lead.name},
+Your Solar Proposal is Ready.
+⚡ System Size: {system_size_text}
+💰 Annual Savings: {annual_savings_text}
+Download Proposal: {proposal_pdf_link}
+
+Thank you,
+Veronic Solar"""
+
+    return {
+        "phone": phone,
+        "message": message,
+        "proposal_pdf_link": proposal_pdf_link
+    }

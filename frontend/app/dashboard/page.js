@@ -3,391 +3,156 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-import {
-  Chart as ChartJS,
-  ArcElement,
-  Tooltip,
-  Legend,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-} from "chart.js";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
 
-import {
-  Doughnut,
-  Line,
-} from "react-chartjs-2";
-
+import { Doughnut } from "react-chartjs-2";
 
 ChartJS.register(
   ArcElement,
   Tooltip,
-  Legend,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement
+  Legend
 );
+
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
     total: 0,
     hot: 0,
-    lost: 0,
-    followups: 0,
-    avgBill: 0,
     revenuePotential: 0,
-    revenueGenerated: 0,
+    callsToday: 0,
+    overdueCalls: 0,
+    todaySurveys: 0,
+    warm: 0,
+    cold: 0,
   });
-
-  const [recentLeads, setRecentLeads] = useState([]);
+  const [reminders, setReminders] = useState({ today: [] });
   const [chartData, setChartData] = useState(null);
-  const [trendData, setTrendData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/leads`)
-      .then((res) => res.json())
-      .then((data) => {
-        setRecentLeads(
-          [...data].reverse().slice(0, 5)
-        );
-
-        const months = [
-          "Jan",
-          "Feb",
-          "Mar",
-          "Apr",
-          "May",
-          "Jun",
-          "Jul",
-          "Aug",
-          "Sep",
-          "Oct",
-          "Nov",
-          "Dec",
-        ];
-
-        const monthlyCounts = new Array(12).fill(0);
-
-        data.forEach((lead) => {
-          if (lead.created_at) {
-            const month = new Date(
-              lead.created_at
-            ).getMonth();
-
-            monthlyCounts[month]++;
-          }
+    Promise.all([
+      fetch(`${API}/dashboard-stats`).then((res) => res.json()),
+      fetch(`${API}/followup-reminders`).then((res) => res.json()),
+    ])
+      .then(([statsData, reminderData]) => {
+        setReminders({
+          today: reminderData.today || [],
         });
 
-        setTrendData({
-          labels: months,
-          datasets: [
-            {
-              label: "Leads",
-              data: monthlyCounts,
-              borderColor: "#3b82f6",
-              backgroundColor: "#3b82f6",
-              tension: 0.4,
-            },
-          ],
-        }); 
-        
-        const total = data.length;
-
-        const hot = data.filter(
-          (l) => l.status === "hot"
-        ).length;
-
-        const warm = data.filter(
-          (l) => l.status === "warm"
-        ).length;
-
-        const cold = data.filter(
-          (l) => l.status === "cold"
-        ).length;
-
-        const closed = data.filter(
-          (l) => l.status === "closed"
-        ).length;
-
-        const lost = data.filter(
-          (l) => l.status === "lost"
-        ).length;
-
         setChartData({
-          labels: [
-            "Hot",
-            "Warm",
-            "Cold",
-            "Closed",
-          ],
+          labels: ["Hot", "Warm", "Cold"],
           datasets: [
             {
-              data: [
-                hot,
-                warm,
-                cold,
-                closed,
-              ],
-              backgroundColor: [
-                "#ef4444",
-                "#facc15",
-                "#3b82f6",
-                "#22c55e",
-              ],
+              data: [statsData.hot || 0, statsData.warm || 0, statsData.cold || 0],
+              backgroundColor: ["#EF4444", "#F59E0B", "#64748B"],
               borderWidth: 0,
             },
           ],
         });
 
-        const followups = data.filter(
-          (l) => l.follow_up_count < 3
-        ).length;
-
-        const totalBill = data.reduce(
-          (sum, l) => sum + (l.bill || 0),
-          0
-        );
-
-        const avgBill =
-          total > 0 ? totalBill / total : 0;
-
-        const revenueGenerated = data
-          .filter(
-            (l) => l.status === "closed"
-          )
-          .reduce(
-            (sum, l) =>
-              sum +
-              ((l.system_size || 0) * 50000),
-            0
-          );
-
-        const revenuePotential = data
-          .filter(
-            (l) =>
-              l.status !== "closed" &&
-              l.status !== "lost"
-          )
-          .reduce(
-            (sum, l) =>
-              sum +
-              ((l.system_size || 0) * 50000),
-            0
-          );
-
         setStats({
-          total,
-          hot,
-          lost,
-          followups,
-          avgBill,
-          revenuePotential,
-          revenueGenerated,
+          total: statsData.total_leads || 0,
+          hot: statsData.hot || 0,
+          warm: statsData.warm || 0,
+          cold: statsData.cold || 0,
+          callsToday: statsData.today_calls || 0,
+          overdueCalls: statsData.overdue_calls || 0,
+          todaySurveys: statsData.today_surveys || 0,
+          revenuePotential: statsData.revenue_potential || 0,
         });
       })
-      .catch((err) =>
-        console.error(err)
-      );
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false));
   }, []);
 
-  const cards = [
-    {
-      title: "Total Leads",
-      value: stats.total,
-      color: "from-blue-600 to-blue-800",
-      icon: "📋",
-    },
-    {
-      title: "Hot Leads",
-      value: stats.hot,
-      color: "from-red-600 to-red-800",
-      icon: "🔥",
-    },
-    {
-      title: "Lost Leads",
-      value: stats.lost,
-      color: "from-gray-600 to-gray-800",
-      icon: "❌",
-    },
-    {
-      title: "Follow Ups",
-      value: stats.followups,
-      color: "from-yellow-500 to-orange-600",
-      icon: "📞",
-    },
-    {
-      title: "Average Bill",
-      value: `₹${stats.avgBill.toFixed(0)}`,
-      color: "from-purple-600 to-purple-800",
-      icon: "💵",
-    },
-    {
-      title: "Revenue Generated",
-      value: `₹${stats.revenueGenerated.toLocaleString()}`,
-      color: "from-green-600 to-green-800",
-      icon: "💰",
-    },
-    {
-      title: "Revenue Potential",
-      value: `₹${stats.revenuePotential.toLocaleString()}`,
-      color: "from-cyan-600 to-cyan-800",
-      icon: "⚡",
-    },
-  ];
-
   return (
-    <div>
-      <h1 className="text-4xl text-white font-bold mb-8">
-        Dashboard
-      </h1>
+    <div className="space-y-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">Dashboard</h1>
+          <p className="mt-2 text-slate-600">
+            Live sales overview and follow-up command center.
+          </p>
+        </div>
 
-      {/* KPI Cards */}
-      <div className="grid md:grid-cols-3 gap-6">
-        {cards.map((card) => (
-          <div
-            key={card.title}
-            className={`bg-gradient-to-r ${card.color} rounded-2xl p-6 shadow-lg`}
-          >
-            <p className="text-white/80">
-              {card.icon} {card.title}
-            </p>
-
-            <h2 className="text-4xl font-bold text-white mt-3">
-              {card.value}
-            </h2>
-          </div>
-        ))}
+        <Link
+          href="/followups"
+          className="inline-flex rounded-xl bg-blue-600 px-5 py-3 font-medium text-white transition hover:bg-blue-700"
+        >
+          View Followups
+        </Link>
       </div>
 
-      {/* Quick Actions */}
-      <div className="mt-10">
-        <h2 className="text-2xl font-bold text-white mb-4">
-          Quick Actions
-        </h2>
+      {loading && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+          <p className="text-slate-600">Loading...</p>
+        </div>
+      )}
 
-        <div className="grid md:grid-cols-4 gap-4">
-          <Link
-            href="/"
-            className="bg-blue-600 hover:bg-blue-700 text-white p-6 rounded-xl text-center transition"
-          >
-            <div className="text-3xl mb-2">➕</div>
-            <p className="font-semibold">
-              New Proposal
-            </p>
-          </Link>
-
-          <Link
-            href="/leads"
-            className="bg-green-600 hover:bg-green-700 text-white p-6 rounded-xl text-center transition"
-          >
-            <div className="text-3xl mb-2">👥</div>
-            <p className="font-semibold">
-              Manage Leads
-            </p>
-          </Link>
-
-          <Link
-            href="/followups"
-            className="bg-yellow-500 hover:bg-yellow-600 text-black p-6 rounded-xl text-center transition"
-          >
-            <div className="text-3xl mb-2">📞</div>
-            <p className="font-semibold">
-              Follow Ups
-            </p>
-          </Link>
-
-          <button
-            className="bg-purple-600 hover:bg-purple-700 text-white p-6 rounded-xl text-center transition"
-          >
-            <div className="text-3xl mb-2">📄</div>
-            <p className="font-semibold">
-              Generate PDF
-            </p>
-          </button>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">Total Leads</p>
+          <h2 className="mt-2 text-2xl font-bold text-slate-900">{stats.total}</h2>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">Hot Leads</p>
+          <h2 className="mt-2 text-2xl font-bold text-amber-500">{stats.hot}</h2>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">Today&apos;s Calls</p>
+          <h2 className="mt-2 text-2xl font-bold text-blue-600">{stats.callsToday}</h2>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">Revenue Potential</p>
+          <h2 className="mt-2 text-2xl font-bold text-emerald-600">₹{stats.revenuePotential.toLocaleString()}</h2>
         </div>
       </div>
 
-      {/* Recent Leads */}
-      <div className="mt-10">
-        <h2 className="text-2xl font-bold text-white mb-4">
-          Recent Leads
-        </h2>
-
-        <div className="bg-slate-900 rounded-2xl p-6 border border-slate-800">
-          {recentLeads.length > 0 ? (
-            recentLeads.map((lead) => (
-              <div
-                key={lead.id}
-                className="flex justify-between items-center border-b border-slate-800 py-4"
-              >
-                <div>
-                  <h3 className="text-white font-semibold">
-                    {lead.name}
-                  </h3>
-
-                  <p className="text-slate-400 text-sm">
-                    {lead.phone}
-                  </p>
-                </div>
-
-                <span
-                  className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    lead.status === "hot"
-                      ? "bg-red-500/20 text-red-400"
-                      : lead.status === "warm"
-                      ? "bg-yellow-500/20 text-yellow-400"
-                      : lead.status === "closed"
-                      ? "bg-green-500/20 text-green-400"
-                      : "bg-blue-500/20 text-blue-400"
-                  }`}
-                >
-                  {lead.status}
-                </span>
-              </div>
-            ))
-          ) : (
-            <p className="text-slate-400">
-              No leads available
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Chart */}
-      <div className="mt-10">
-        <h2 className="text-2xl font-bold text-white mb-4">
-          Lead Status Analytics
-        </h2>
-
-        <div className="bg-slate-900 rounded-2xl p-6 border border-slate-800">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="mb-4 text-xl font-semibold text-slate-800">Lead Status Chart</h2>
           {chartData && (
-            <div className="max-w-md mx-auto">
+            <div className="mx-auto max-w-sm">
               <Doughnut data={chartData} />
             </div>
           )}
         </div>
-      </div>
 
-      <div className="mt-10">
-
-        <h2 className="text-2xl font-bold text-white mb-4">
-          Monthly Lead Trend
-        </h2>
-
-        <div className="bg-slate-900 rounded-2xl p-6 border border-slate-800">
-
-          {trendData && (
-            <Line data={trendData} />
-          )}
-
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="mb-4 text-xl font-semibold text-slate-800">Today&apos;s Followups</h2>
+          <div className="space-y-3">
+            {reminders.today.length > 0 ? (
+              reminders.today.map((lead) => (
+                <div
+                  key={lead.id}
+                  className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
+                >
+                  <div>
+                    <p className="font-semibold text-slate-900">{lead.name}</p>
+                    <p className="text-sm text-slate-500">{lead.phone}</p>
+                  </div>
+                  <span
+                    className="rounded-full px-3 py-1 text-xs font-medium bg-blue-100 text-blue-700"
+                  >
+                    {lead.status}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <p className="text-slate-600">No followups due today.</p>
+            )}
+          </div>
+          <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              Survey due today: <span className="font-semibold text-slate-900">{stats.todaySurveys}</span>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              Overdue calls: <span className="font-semibold text-slate-900">{stats.overdueCalls}</span>
+            </div>
+          </div>
         </div>
-
       </div>
-
-
-
     </div>
   );
 }
